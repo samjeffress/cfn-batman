@@ -3,18 +3,19 @@
 const AWS = require('aws-sdk');
 const _ = require('lodash');
 const moment = require('moment');
-
+const config = require('../config')
 const cloudformation = new AWS.CloudFormation();
 
-const batmanTagKey = 'Batman';
+const batmanTagKey = config.batmanTagKey
+const stackToKeepRegexes = config.stackToKeepRegexes
+const branchKeyMatches = config.branchKeyMatches
 
 const cleanupStacks = async dryRun => {
   console.log("In Clean UP Stacks");
-
   const allStacks = await listAllStacks(null, [])
   console.log("allStacks", allStacks.length);
-  const nonMasterStacks = findNonMasterStacks(allStacks);
-  const oldNonMasterStacks = getOldStacks(nonMasterStacks);
+  const stacksOnUnprotectedBranch = getBranchesAllowedToRemove(allStacks, stackToKeepRegexes, branchKeyMatches);
+  const oldNonMasterStacks = getOldStacks(stacksOnUnprotectedBranch);
   const withStatuses = filterStacksByStatus(oldNonMasterStacks);
   const filteredStacks = ignoreStacksWithBatmanTag(withStatuses);
   const batmanTaggedStacks = getBatmanStacks(withStatuses);
@@ -33,9 +34,8 @@ const cleanupStacks = async dryRun => {
 const deleteFromGitBranch = async (branchDeleteInformation) => {
   console.log(branchDeleteInformation);
   const allStacks = await listAllStacks(null, [])
-  const nonMasterStacks = findNonMasterStacks(allStacks);
-  const foundStack = stacksWithRepoAndBranchName(nonMasterStacks, branchDeleteInformation.repository.name, branchDeleteInformation.ref);
-
+  const stacksOnUnprotectedBranch = getBranchesAllowedToRemove(allStacks, stackToKeepRegexes, branchKeyMatches);
+  const foundStack = stacksWithRepoAndBranchName(stacksOnUnprotectedBranch, branchDeleteInformation.repository.name, branchDeleteInformation.ref);
   console.log('found stack', foundStack);
   const deletedStacks = await deleteStacks(foundStack);
   console.log('deletedStacks', deletedStacks);
@@ -63,7 +63,7 @@ const deleteStacks = async (stacks, dryRun) => {
   });
 }
 
-const listAllStacks = (token, stackArray) => {
+const listAllStacks = async (token, stackArray) => {
   console.log('getting stacks.....');
   const params = { NextToken: token };
   const data = await cloudformation.describeStacks(params).promise()
@@ -80,19 +80,22 @@ function filterStacksByStatus(stacksArray) {
   });
 }
 
-function findNonMasterStacks(stacksArray) {
-  const nonMasterStacks = _.filter(stacksArray, stack => {
-    const branchTag = _.filter(stack.Tags, (tag) => {return tag.Key.toLowerCase() == process.env.BRANCH_KEY.toLowerCase()});
+function getBranchesAllowedToRemove(stacksArray, arrayOfRegexes, branchKeyMatches) {
+  const nonMatchingStacks = _.filter(stacksArray, stack => {
+    const branchTag = _.filter(stack.Tags, tag => branchKeyMatches(tag.Key));
     if(branchTag.length == 0) {
       // check if there are any tags at all - this might be an Elastic Beanstalk app!
       if (stack.Tags.length === 0) {
+        console.log('stack without tag: ', stack.StackName)
         return isStackNonMasterElasticBeanstalk(stack);
       }
       return false;
     }
-    return branchTag[0].Value.toLowerCase() != 'master';
+    const branchTagValue = branchTag[0].Value.toLowerCase()
+    const branchValueIsProtected = arrayOfRegexes.some(r => r.test(branchTagValue))
+    return !branchValueIsProtected
   });
-  return nonMasterStacks;
+  return nonMatchingStacks;
 }
 
 function isStackNonMasterElasticBeanstalk(stack) {
