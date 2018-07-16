@@ -1,12 +1,12 @@
-service: cfn-batman 
+service: cfn-batman-${self:provider.region}
 
 provider:
   name: aws
   runtime: nodejs8.10
   environment:
-    GITHUB_SECRET: ${env:GITHUB_SECRET}
+    GITHUB_SECRET: ${env:GITHUB_SECRET, 'cats'}
     
-  region: ap-southeast-2
+  region: ${opt:region, env:AWS_DEFAULT_REGION, 'ap-southeast-2'}
   iamRoleStatements:
     - Effect: "Allow"
       Action:
