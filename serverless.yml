@@ -1,4 +1,4 @@
-service: nib-batman 
+service: cfn-batman 
 
 provider:
   name: aws
